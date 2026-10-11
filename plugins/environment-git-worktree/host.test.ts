@@ -864,6 +864,75 @@ describe.concurrent("worktree host entry", () => {
     await harness.experimental_dispose();
   });
 
+  it("preserves completed detached worktrees and user changes on retry", async ({
+    onTestFinished,
+  }) => {
+    const { sourcePath, dataDir } =
+      await createSourceRepository(onTestFinished);
+    const harness = createHarness(dataDir);
+    const input = createInput({
+      operationId: "first",
+      sourcePath,
+      pathKey: "detached-retry",
+      branchName: "bb/detached-retry",
+    });
+    const first = await harness.experimental_call("create", input);
+    if (first.status !== "created") throw new Error(first.message);
+    await git(first.path, "checkout", "--detach");
+    await writeFile(join(first.path, "README.md"), "user commit\n");
+    await git(first.path, "add", "README.md");
+    await git(first.path, "commit", "-m", "user work");
+    await writeFile(join(first.path, "notes.txt"), "uncommitted work\n");
+    const head = await git(first.path, "rev-parse", "HEAD");
+    const status = await git(first.path, "status", "--porcelain");
+
+    expect(
+      await harness.experimental_call("create", {
+        ...input,
+        operationId: "retry",
+      }),
+    ).toMatchObject({ status: "created", path: first.path });
+    expect(await git(first.path, "rev-parse", "HEAD")).toBe(head);
+    expect(await git(first.path, "status", "--porcelain")).toBe(status);
+    expect(
+      (await git(first.path, "rev-parse", "--abbrev-ref", "HEAD")).trim(),
+    ).toBe("HEAD");
+    await harness.experimental_dispose();
+  });
+
+  it("rejects a foreign repository at a completed worktree path without changing it", async ({
+    onTestFinished,
+  }) => {
+    const { sourcePath, dataDir } =
+      await createSourceRepository(onTestFinished);
+    const harness = createHarness(dataDir);
+    const input = createInput({
+      operationId: "first",
+      sourcePath,
+      pathKey: "foreign-retry",
+      branchName: "bb/foreign-retry",
+    });
+    const first = await harness.experimental_call("create", input);
+    if (first.status !== "created") throw new Error(first.message);
+    await git(sourcePath, "worktree", "remove", first.path);
+    await mkdir(first.path);
+    await git(first.path, "init", "--initial-branch=bb/foreign-retry");
+    await writeFile(join(first.path, "notes.txt"), "other repository\n");
+    const status = await git(first.path, "status", "--porcelain");
+
+    expect(
+      await harness.experimental_call("create", {
+        ...input,
+        operationId: "retry",
+      }),
+    ).toMatchObject({
+      status: "failed",
+      message: expect.stringContaining("left alone"),
+    });
+    expect(await git(first.path, "status", "--porcelain")).toBe(status);
+    await harness.experimental_dispose();
+  });
+
   it("replaces an invalid target before recreating the expected branch", async ({
     onTestFinished,
   }) => {

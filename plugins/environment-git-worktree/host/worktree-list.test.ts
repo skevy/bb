@@ -82,6 +82,14 @@ describe("parseWorktreeListPorcelain", () => {
     expect(parseWorktreeListPorcelain("")).toEqual([]);
   });
 
+  it("can inspect worktrees beyond the adoption list limit for retry validation", () => {
+    const stdout = Array.from({ length: 501 }, (_, index) =>
+      record([`worktree /repo-${index}`, "detached"]),
+    ).join("");
+    expect(parseWorktreeListPorcelain(stdout)).toHaveLength(500);
+    expect(parseWorktreeListPorcelain(stdout, Infinity)).toHaveLength(501);
+  });
+
   it("keeps a path containing spaces intact", () => {
     const stdout = record([
       "worktree /Users/a/My Code/repo wt",
